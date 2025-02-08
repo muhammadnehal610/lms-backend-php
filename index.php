@@ -11,6 +11,9 @@ include_once __DIR__ . '/controllers/TeamController.php';
 include_once __DIR__ . '/controllers/BulkimportController.php';
 include_once __DIR__ . '/controllers/ModuleController.php';
 include_once __DIR__ . '/controllers/ReportController.php';
+include_once __DIR__ . '/controllers/LearningPathController.php';
+include_once __DIR__ . '/controllers/SessionsController.php';
+require_once __DIR__ . '/controllers/PeopleController.php';
 include_once __DIR__ . '/middlewere/AuthMiddlewere.php';
 include_once __DIR__ . '/helper/Cloudnery.php';
 require_once __DIR__ . '/vendor/autoload.php'; // For JWT
@@ -49,8 +52,9 @@ function route($uri, $method, $db)
     $bulkController = new BulkImportController($db);
     $moduleController = new ModuleController($db);
     $reportController = new ReportController($db);
-
-
+    $learningPathController = new LearningPathController($db);
+    $sessionsController = new SessionsController($db);
+    $peopleController = new PeopleController($db);
     // Handle auth routes
     if ($uri === '/lsmBackend/api/auth/register' && $method === 'POST') {
         $data = json_decode(file_get_contents("php://input"));
@@ -66,6 +70,9 @@ function route($uri, $method, $db)
     if ($uri === '/lsmBackend/api/auth/forget-password' && $method === 'POST') {
         $data = json_decode(file_get_contents("php://input"));
         return $authController->forgetPassword($data);
+    }
+    if($uri==='/lsmBackend/api/auth/enum' && $method === 'GET'){
+        return $authController->getEnumValuesUserTable();
     }
 
     if ($uri === '/lsmBackend/api/addperson' && $method === 'POST') {
@@ -86,7 +93,7 @@ function route($uri, $method, $db)
     if ($uri === '/lsmBackend/api/courses' && $method === 'GET') {
         return $courseController->getAllCourses();
     }
-    if ($uri === '/lsmBackend/api/users/getinstructor' && $method === 'GET') {
+    if ($uri === '/lsmBackend/api/users/instructor' && $method === 'GET') {
         return $courseController->getInstructor();
     }
     if ($uri === '/lsmBackend/api/courses' && $method === 'POST') {
@@ -158,7 +165,6 @@ function route($uri, $method, $db)
             return $courseController->markAsCompleted($courseId);
         }
     }
-
     if (preg_match('/^\/lsmBackend\/api\/courses\/(\d+)$/', $uri, $matches)) {
         $courseId = $matches[1];
         if ($method === 'GET') {
@@ -230,13 +236,31 @@ function route($uri, $method, $db)
             return $courseController->deleteCourse($courseId);
         }
     }
+    if (preg_match('/^\/lsmBackend\/api\/users\/courses\/(\d+)$/', $uri, $matches)) {
+        $courseId = $matches[1];
+        $authMiddlewere = new AuthMiddleware($jwtSecret);
+        $user_id = $authMiddlewere->handleCreatedBy();
+        if ($method === 'GET') {
+            return $courseController->getCourseByIdByUser($courseId, $user_id);
+        }
+    }
+    if ($uri === '/lsmBackend/api/courses/badges' && $method === 'GET') {
+        $authMiddlewere = new AuthMiddleware($jwtSecret);
+        $userId =  $authMiddlewere->handleCreatedBy();
+        return $courseController->getBadgesByUserId($userId);
+    }
+    if ($uri === '/lsmBackend/api/courses/getachievement' && $method === 'GET') {
+        $authMiddlewere = new AuthMiddleware($jwtSecret);
+        $userId =  $authMiddlewere->handleCreatedBy();
+        return $moduleController->getAchievement($userId);
+    }
     if (preg_match('/^\/lsmBackend\/api\/courses\/(\d+)\/modules$/', $uri, $matches)) {
         $courseId = $matches[1];
         if ($method === 'POST') {
             $data = json_decode($_POST['data'], true);
             if ($data['module_type'] === 'scorm') {
                 $file = $_FILES['scorm_file'];
-                $fileUrl = uploadFileToCloudinary($file, 'courses'); // Specify 'courses' folder for organization
+                $fileUrl = uploadZipToCloudinary($file, 'courses'); // Specify 'courses' folder for organization
                 if (!$fileUrl) {
                     return [
                         'error' => true,
@@ -259,20 +283,18 @@ function route($uri, $method, $db)
     if (preg_match('/^\/lsmBackend\/api\/courses\/(\d+)\/modules\/(\d+)\/scorm$/', $uri, $matches)) {
         $courseId = $matches[1];
         $moduleId = $matches[2];
+        $authMiddlewere = new AuthMiddleware($jwtSecret);
+        $userId =  $authMiddlewere->handleCreatedBy();
         if ($method === 'GET') {
-            return $moduleController->getScormFile($moduleId);
+            return $moduleController->getScormFile($moduleId, $courseId, $userId);
         }
     }
-
-
     if (preg_match('/^\/lsmBackend\/api\/courses\/(\d+)\/modules\/(\d+)(\?.*)?$/', $uri, $matches)) {
 
         $moduleId = $matches[2];
 
         if ($method === 'GET') {
-            $authMiddlewere = new AuthMiddleware($jwtSecret);
-            $userId =  $authMiddlewere->handleCreatedBy();
-            $result = $moduleController->getModuleByIdAdmin($moduleId);
+            $result = $moduleController->getModuleById($moduleId);
             return $result;
         }
         if ($method === 'DELETE') {
@@ -324,15 +346,7 @@ function route($uri, $method, $db)
             return $moduleController->endModule($userId, $data->moduleId, $courseId);
         }
     }
-    if (preg_match('/^\/lsmBackend\/api\/users\/courses\/modules\/(\d+)$/', $uri, $matches)) {
-        if ($method === 'GET') {
-            $moduleId = $matches[1];
-            $authMiddlewere = new AuthMiddleware($jwtSecret);
-            $userId =  $authMiddlewere->handleCreatedBy();
-            $result = $moduleController->getModuleById($moduleId, $userId);
-            return $result;
-        }
-    }
+
     if (preg_match('/^\/lsmBackend\/api\/courses\/(\d+)\/teams$/', $uri, $matches)) {
         $courseid = $matches[1];
         if ($method === 'POST') {
@@ -446,7 +460,6 @@ function route($uri, $method, $db)
         $courseId = $matches[1];
         if ($method === 'POST') {
             $data = json_decode(file_get_contents('php://input'), true);
-
             return $courseController->addEnrollment($courseId, $data['ids']);
         }
         if ($method === 'DELETE') {
@@ -459,6 +472,17 @@ function route($uri, $method, $db)
         if ($method === 'PUT') {
             $data = json_decode(file_get_contents('php://input'));
             return $courseController->editEnrollmentResults($courseId, $data);
+        }
+    }
+    if (preg_match('/^\/lsmBackend\/api\/courses\/(\d+)\/enrollmentbyuser$/', $uri, $matches)) {
+        $authMiddlewere = new AuthMiddleware($jwtSecret);
+        $userId = $authMiddlewere->handleCreatedBy();
+        $courseId = $matches[1];
+        if ($method === 'POST') {
+            return $courseController->addEnrollmentByuser($courseId, $userId);
+        }
+        if ($method === 'DELETE') {
+            return $courseController->deleteEnrollmentByUser($courseId, $userId);
         }
     }
     if ($uri === '/lsmBackend/api/teams' && $method === 'POST') {
@@ -497,6 +521,60 @@ function route($uri, $method, $db)
         }
     }
 
+    if ($uri === '/lsmBackend/api/learningpath' && $method === 'POST') {
+        $file_path = null;
+        if (isset($_FILES['file'])) {
+            $file = $_FILES['file'];
+            $file_path  = uploadFileToCloudinary($file);
+            if (!$file_path) {
+                return [
+                    'error' => false,
+                    'status' => 400,
+                    'massege' => 'image not upload'
+                ];
+            }
+        }
+        $data = json_decode($_POST['data'], true);
+        $data['image'] = $file_path;
+        return $learningPathController->addLearningPath($data);
+    }
+    if ($uri === '/lsmBackend/api/getlearningpath' && $method === 'GET') {
+        return $learningPathController->getLearningPaths();
+    }
+    if (preg_match('/^\/lsmBackend\/api\/getlearningpath\/(\d+)$/', $uri, $matches)) {
+        $learningPathId = $matches[1];
+        if ($method === 'GET') {
+            return $learningPathController->getLearningPathById($learningPathId);
+        }
+    }
+    if (preg_match('/^\/lsmBackend\/api\/getlearningpath\/(\d+)\/enrolledlearningpathbyuser$/', $uri, $matches)) {
+        $learningPathId = $matches[1];
+        $authMiddlewere = new AuthMiddleware($jwtSecret);
+        $userId = $authMiddlewere->handleCreatedBy();
+        if ($method === 'POST') {
+            return $learningPathController->enrolledLearningPathByUser($learningPathId, $userId);
+        }
+    }
+    if ($uri === '/lsmBackend/api/sessions' && $method === 'POST') {
+        $data = json_decode(file_get_contents("php://input"));
+        return $sessionsController->addSessions($data);
+    }
+    if ($uri === '/lsmBackend/api/sessions' && $method === 'GET') {
+        $data = json_decode(file_get_contents("php://input"));
+        return $sessionsController->getSessions();
+    }
+
+    if (preg_match('/^\/lsmBackend\/api\/sessions\/(\d+)$/', $uri, $matches)) {
+        $sessionId = $matches[1];
+        if ($method === 'GET') {
+            return $sessionsController->getSessionsById($sessionId);
+        }
+        if ($method === 'POST') {
+            $authMiddlewere = new AuthMiddleware($jwtSecret);
+            $userId =  $authMiddlewere->handleCreatedBy();
+            return $sessionsController->sessionEnrollment($userId, $sessionId);
+        }
+    }
     if ($uri === '/lsmBackend/api/reports/summary' && $method === 'GET') {
         $reportSummary = $reportController->getSummary();
         return $reportSummary;
@@ -541,9 +619,89 @@ function route($uri, $method, $db)
     if ($uri === '/lsmBackend/api/reports/getassessmentompletion' && $method = 'GET') {
         return $reportController->getAssessmentCompletion();
     }
+    if ($uri === '/lsmBackend/api/reports/getcompliancesummary' && $method = 'GET') {
+        return $reportController->getComplianceSummary();
+    }
+    if ($uri === '/lsmBackend/api/reports/getachievementreports' && $method = 'GET') {
+        return $reportController->getAchievementReports();
+    }
+    if ($uri === '/lsmBackend/api/reports/getbadgesreports' && $method = 'GET') {
+        return $reportController->getBadgesReports();
+    }
+    if ($uri === '/lsmBackend/api/reports/getteamsreport' && $method = 'GET') {
+        return $reportController->getTeamsReport();
+    }
+    if ($uri === '/lsmBackend/api/reports/getlearningpathreport' && $method = 'GET') {
+        return $reportController->getLearningPathReport();
+    }
+    if ($uri === '/lsmBackend/api/reports/getessionseport' && $method = 'GET') {
+        return $reportController->getSessionsReport();
+    }
+    if (preg_match('/^\/lsmBackend\/api\/people\/(\d+)\/recentactivity$/', $uri, $matches)) {
+        $userId = $matches[1];
+        if ($method === 'GET') {
+            return  $peopleController->getRecentAtivity($userId);
+        }
+    }
+    if (preg_match('/^\/lsmBackend\/api\/people\/(\d+)\/acheivements$/', $uri, $matches)) {
+        $userId = $matches[1];
+        if ($method === 'GET') {
+            return  $peopleController->getAcheivements($userId);
+        }
+    }
+    if (preg_match('/^\/lsmBackend\/api\/people\/(\d+)\/courses$/', $uri, $matches)) {
+        $userId = $matches[1];
+        if ($method === 'GET') {
+            return  $peopleController->getCourses($userId);
+        }
+    }
+    if (preg_match('/^\/lsmBackend\/api\/people\/(\d+)\/courses\/(\d+)$/', $uri, $matches)) {
+        $userId = $matches[1];
+        $courseId = $matches[2];
+        if ($method === 'GET') {
+            return  $peopleController->getModuleByCourses($userId, $courseId);
+        }
+    }
+    if (preg_match('/^\/lsmBackend\/api\/people\/(\d+)\/learningpaths$/', $uri, $matches)) {
+        $userId = $matches[1];
+        if ($method === 'GET') {
+            return  $peopleController->getLearningPaths($userId);
+        }
+    }
+    if (preg_match('/^\/lsmBackend\/api\/people\/(\d+)\/learningpaths\/(\d+)$/', $uri, $matches)) {
+        $userId = $matches[1];
+        $learning_path_id = $matches[2];
+        if ($method === 'GET') {
+            return  $peopleController->getLearningPathById($userId, $learning_path_id);
+        }
+    }
+    if (preg_match('/^\/lsmBackend\/api\/people\/(\d+)\/iltsessions$/', $uri, $matches)) {
+        $userId = $matches[1];
+        if ($method === 'GET') {
+            return  $peopleController->getIltSessions($userId);
+        }
+    }
+    if (preg_match('/^\/lsmBackend\/api\/people\/(\d+)\/teams$/', $uri, $matches)) {
+        $userId = $matches[1];
+        if ($method === 'GET') {
+            return  $peopleController->getUserTeams($userId);
+        }
+    }
+    if (preg_match('/^\/lsmBackend\/api\/people\/(\d+)\/getteams$/', $uri, $matches)) {
+        $userId = $matches[1];
+        if ($method === 'GET') {
+            return  $peopleController->getTeams($userId);
+        }
+    }
+    if (preg_match('/^\/lsmBackend\/api\/people\/(\d+)\/teams\/(\d+)$/', $uri, $matches)) {
+        $userId = $matches[1];
+        $teamId = $matches[2];
+        if ($method === 'POST') {
+            return  $peopleController->userAssignToTeam($userId, $teamId);
+        }
+    }
     return ["invalid url", $uri, $method];
 }
-
 $response = route($uri, $method, $db);
 header('Content-Type: application/json');
 echo json_encode($response);

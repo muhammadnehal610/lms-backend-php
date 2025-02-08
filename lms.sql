@@ -231,3 +231,143 @@ CREATE TABLE scorm_modules (
     uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (module_id) REFERENCES modules(id)
 );
+CREATE TABLE achievements (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    module_id INT NOT NULL,
+    earned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (module_id) REFERENCES modules(id)
+);
+CREATE TABLE badges (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    course_id INT NOT NULL,
+    badge_name VARCHAR(255) NOT NULL,
+    earned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (course_id) REFERENCES courses(id)
+);
+
+CREATE TABLE learning_paths (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE learning_path_courses (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    learning_path_id INT,
+    course_id INT,
+    sequence INT,  -- Order of courses in the path
+    FOREIGN KEY (learning_path_id) REFERENCES learning_paths(id) ON DELETE CASCADE,
+    FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
+);
+CREATE TABLE user_learning_path_progress (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT,
+    learning_path_id INT,
+    course_id INT,
+    status ENUM('Not Started', 'In Progress', 'Completed') DEFAULT 'Not Started',
+    completed_at TIMESTAMP NULL DEFAULT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (learning_path_id) REFERENCES learning_paths(id) ON DELETE CASCADE,
+    FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
+);
+
+
+-- ILT Sessions Table (Stores Training Sessions)
+
+CREATE TABLE ilt_sessions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    session_name VARCHAR(255) NOT NULL,
+    course_id INT NOT NULL,
+    module_id INT NOT NULL,
+    location VARCHAR(255) NOT NULL,
+    start_time DATETIME NOT NULL,
+    end_time DATETIME NOT NULL,
+    max_participants INT NOT NULL,
+    status ENUM('Scheduled', 'Completed', 'Canceled') DEFAULT 'Scheduled',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (course_id) REFERENCES course(id) ON DELETE CASCADE,
+    FOREIGN KEY (module_id) REFERENCES modules(id) ON DELETE CASCADE,
+  
+);
+
+
+--  ILT Enrollments Table (Tracks User Enrollment)
+
+CREATE TABLE ilt_enrollments (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    session_id INT NOT NULL,
+    enrolled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES person(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES ilt_sessions(id) ON DELETE CASCADE
+);
+
+
+--  ILT Attendance Table (Stores Attendance Records)
+
+CREATE TABLE ilt_attendance (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    session_id INT NOT NULL,
+    status ENUM('Present', 'Absent', 'Late', 'Excused') NOT NULL DEFAULT 'Absent',
+    marked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES person(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES ilt_sessions(id) ON DELETE CASCADE
+);
+
+
+--  Notifications Table (For ILT Session Reminders)
+
+CREATE TABLE ilt_notifications (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    session_id INT NOT NULL,
+    message TEXT NOT NULL,
+    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES person(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES ilt_sessions(id) ON DELETE CASCADE
+);
+
+CREATE TABLE course_views (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    course_id INT NOT NULL,
+    viewed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES person(id) ON DELETE CASCADE,
+    FOREIGN KEY (course_id) REFERENCES course(id) ON DELETE CASCADE
+);
+
+CREATE TABLE assessment_module (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    module_id INT NOT NULL,
+    total_marks INT NOT NULL,
+    pass_ratio INT DEFAULT 0,
+    user_id INT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (module_id) REFERENCES modules(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES person(id) ON DELETE CASCADE
+);
+
+CREATE TABLE assessment_module_submision(
+    id INT PRIMARY key ,
+    user_id INT NOT NULL,
+    earn_marks INT NOT NULL,
+    assessment_module_id INT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES person(id) ON DELETE CASCADE,
+    FOREIGN KEY (assessment_module_id) REFERENCES assessment_module(id) ON DELETE CASCADE
+)
+CREATE TABLE user_gamification (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    total_points INT DEFAULT 0,
+    level VARCHAR(50) DEFAULT 'Beginner',
+    badges JSON DEFAULT NULL,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES person(id) ON DELETE CASCADE
+);
+
+

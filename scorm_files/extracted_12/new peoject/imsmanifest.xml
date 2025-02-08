@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest xmlns="http://www.adlnet.org/xsd/adlcp_rootv1p3" xmlns:adlseq="http://www.adlnet.org/xsd/adlseqv1p3" xmlns:adlcm="http://www.adlnet.org/xsd/adlcmv1p3" xmlns:adlmd="http://www.adlnet.org/xsd/adlmdv1p3" identifier="com.example.course" version="1.0">
+  <metadata>
+    <schema>ADL SCORM</schema>
+    <schemaversion>1.3.0</schemaversion>
+  </metadata>
+  
+  <organizations default="org1">
+    <organization identifier="org1">
+      <title>Sample SCORM Course</title>
+      <item identifier="item1" identifierref="resource1">
+        <title>Introduction</title>
+      </item>
+    </organization>
+  </organizations>
+
+  <resources>
+    <resource identifier="resource1" type="webcontent" href="index.html">
+      <file href="index.html"/>
+      <file href="styles.css"/>
+      <file href="script.js"/>
+    </resource>
+  </resources>
+</manifest>

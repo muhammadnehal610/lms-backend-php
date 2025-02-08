@@ -1,4 +1,8 @@
 <?php
+require_once('vendor/autoload.php'); // Ensure TCPDF is installed
+require_once __DIR__ . '/../vendor/tecnickcom/tcpdf/tcpdf.php';
+
+
 
 class Reports
 {
@@ -203,34 +207,86 @@ class Reports
             ];
         }
     }
+
+    private function generatePDF($data, $title)
+    {
+        $pdf = new TCPDF();
+        $pdf->SetCreator(PDF_CREATOR);
+        $pdf->SetAuthor('LMS System');
+        $pdf->SetTitle($title);
+        $pdf->SetSubject($title);
+        $pdf->SetMargins(10, 10, 10);
+        $pdf->SetAutoPageBreak(TRUE, 10);
+        $pdf->AddPage();
+
+        // Title
+        $pdf->SetFont('helvetica', 'B', 16);
+        $pdf->Cell(0, 10, $title, 0, 1, 'C');
+        $pdf->Ln(5);
+
+        if (!empty($data)) {
+            // Get keys for table headers
+            $headers = array_keys($data[0]);
+
+            // Auto width calculation
+            $columnWidths = [];
+            $totalColumns = count($headers);
+            $pageWidth = $pdf->GetPageWidth() - 20; // Adjust for margins
+
+            foreach ($headers as $header) {
+                $columnWidths[] = $pageWidth / $totalColumns;
+            }
+
+            // Print table headers
+            $pdf->SetFont('helvetica', 'B', 10);
+            foreach ($headers as $index => $header) {
+                $pdf->MultiCell($columnWidths[$index], 10, ucfirst(str_replace('_', ' ', $header)), 1, 'C', 0, 0);
+            }
+            $pdf->Ln();
+
+            // Print table rows
+            $pdf->SetFont('helvetica', '', 9);
+            foreach ($data as $row) {
+                foreach ($headers as $index => $header) {
+                    $pdf->MultiCell($columnWidths[$index], 10, $row[$header] ?? '-', 1, 'C', 0, 0);
+                }
+                $pdf->Ln();
+            }
+        } else {
+            $pdf->Cell(0, 10, 'No data available.', 0, 1, 'C');
+        }
+
+        // Output PDF
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: attachment; filename="' . strtolower(str_replace(' ', '_', $title)) . '.pdf"');
+        $pdf->Output($title . '.pdf', 'D'); // 'D' for download
+        exit;
+    }
+
+
+
     public function getCourseCreationAndCompletionReport()
     {
-        // Query to count courses created and completed in the last 30 days
         $query = 'SELECT 
-                    COUNT(CASE WHEN created_at >= CURDATE() - INTERVAL 30 DAY THEN 1 END) AS courses_created_last_30_days,
-                    COUNT(CASE WHEN  completed_at >= CURDATE() - INTERVAL 30 DAY THEN 1 END) AS courses_completed_last_30_days
-                  FROM course';
+               c.status as active,
+                c.title AS course_name,
+                c.created_at,
+                c.completed_at,
+                (CASE WHEN c.completed_at IS NOT NULL THEN "Completed" ELSE "In Progress" END) AS status
+              FROM course c
+              ORDER BY c.created_at DESC';
 
-        // Prepare and execute the query
-        $query = $this->db->prepare($query);
-        $query->execute();
+        $stmt = $this->db->prepare($query);
+        $stmt->execute();
+        $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        // Fetch the result
-        $result = $query->fetch(PDO::FETCH_ASSOC);
-
-        // Return the result
-        return [
-            'status' => 200,
-            'msg' => 'Course creation and completion report fetched successfully',
-            'data' => [
-                'courses_created_last_30_days' => $result['courses_created_last_30_days'],
-                'courses_completed_last_30_days' => $result['courses_completed_last_30_days']
-            ]
-        ];
+        $this->generatePDF($result, 'Course Creation and Completion Report');
     }
+
+
+
     public function getModuleCompletionReport()
     {
-        // Query to get the count of completed and not completed users per module
         $query = 'SELECT 
                     m.id AS module_id, 
                     m.title AS module_title,
@@ -239,69 +295,223 @@ class Reports
                   FROM modules m
                   LEFT JOIN module_completion mc ON mc.module_id = m.id
                   GROUP BY m.id';
+        $stmt = $this->db->prepare($query);
+        $stmt->execute();
+        $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        // Prepare and execute the query
-        $query = $this->db->prepare($query);
-        $query->execute();
-
-        // Fetch the result
-        $result = $query->fetchAll(PDO::FETCH_ASSOC);
-
-        // Check if there are any results
-        if ($result) {
-            return [
-                'status' => 200,
-                'msg' => 'Module completion report fetched successfully',
-                'data' => $result
-            ];
-        } else {
-            return [
-                'status' => 404,
-                'msg' => 'No data found',
-                'data' => []
-            ];
-        }
+        $this->generatePDF($result, 'Module Completion Report');
     }
+
 
     public function getAssessmentCompletion()
     {
         $query = "SELECT 
-    COUNT(DISTINCT m.id) AS total_assessments,  -- Get total assessments from module table
-    COUNT(DISTINCT CASE WHEN mc.status = 'Completed' THEN mc.user_id END) AS completed_students,
-    COUNT(DISTINCT CASE WHEN mc.status = 'Failed' THEN mc.user_id END) AS failed_students,
-    c.title AS course_name
-FROM 
-    modules m
-JOIN 
-    module_completion mc ON mc.module_id = m.id
-JOIN 
-    course c ON c.id = m.course_id
-WHERE 
-    m.module_type = 'assessment'  -- Only filter for 'assessment' type modules
-    AND mc.completed_at >= CURDATE() - INTERVAL 30 DAY  -- Last 30 days condition
-
-GROUP BY 
-    c.title;
-";
+                    c.title AS course_name,
+                    COUNT(DISTINCT m.id) AS total_assessments,
+                    COUNT(DISTINCT mc.user_id) AS total_students_attempted,
+                    COUNT(DISTINCT CASE WHEN mc.status = 'Completed' THEN mc.user_id END) AS completed_students,
+                    COUNT(DISTINCT CASE WHEN mc.status = 'Failed' THEN mc.user_id END) AS failed_students,
+                    ROUND(
+                        (COUNT(DISTINCT CASE WHEN mc.status = 'Completed' THEN mc.user_id END) / 
+                        NULLIF(COUNT(DISTINCT mc.user_id), 0)) * 100, 2
+                    ) AS completion_rate
+                FROM modules m
+                JOIN module_completion mc ON mc.module_id = m.id
+                JOIN course c ON c.id = m.course_id
+                WHERE m.module_type = 'assessment'  
+                  AND mc.completed_at >= CURDATE() - INTERVAL 30 DAY  
+                GROUP BY c.title";
 
         $stmt = $this->db->prepare($query);
         $stmt->execute();
         $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        if ($result) {
 
-            return [
-                'error' => false,
-                'status' => 200,
-                'massege' => 'assessment report fetch successfully',
-                'data' => $result
-            ];
+        $this->generatePDF($result, 'Assessment Completion Report');
+    }
+    public function getComplianceSummary()
+    {
+        $query = "SELECT 
+           c.title AS course_title,
+           COUNT(DISTINCT e.user_id) AS total_students,
+           SUM(CASE WHEN e.additional_info = 'Completed' THEN 1 ELSE 0 END) AS completed_students,
+           SUM(CASE WHEN e.additional_info = 'In Progress' THEN 1 ELSE 0 END) AS in_progress_students,
+           (COUNT(DISTINCT e.user_id) - 
+            SUM(CASE WHEN e.additional_info = 'Completed' THEN 1 ELSE 0 END) - 
+            SUM(CASE WHEN e.additional_info = 'In Progress' THEN 1 ELSE 0 END)) AS pending_students,
+           IF(COUNT(DISTINCT e.user_id) > 0, 
+              ROUND((SUM(CASE WHEN e.additional_info = 'Completed' THEN 1 ELSE 0 END) * 100.0 / COUNT(DISTINCT e.user_id)), 2), 
+              0) AS completion_percentage
+                FROM enrollment e
+                LEFT JOIN course c ON e.course_id = c.id
+                GROUP BY e.course_id, c.title
+                ORDER BY completion_percentage DESC";
+
+        $stmt = $this->db->prepare($query);
+        $stmt->execute();
+        $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $this->generatePDF($result, 'Compliance Summary Report');
+    }
+    public function getAchievementReports()
+    {
+        $query = 'SELECT 
+                    m.title AS achievement_title, 
+                    COUNT(DISTINCT a.user_id) AS users_earned_achievement
+                  FROM achievements a
+                  JOIN modules m ON m.id = a.module_id
+                  WHERE a.earned_at >= CURDATE() - INTERVAL 30 DAY
+                  GROUP BY a.module_id, m.title
+                  ORDER BY a.earned_at DESC';
+        $stmt = $this->db->prepare($query);
+        $stmt->execute();
+        $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $this->generatePDF($result, 'Achievement Reports');
+    }
+    public function getBadgesReports()
+    {
+        $query = 'SELECT badge_name, COUNT(DISTINCT user_id) AS total_students 
+                  FROM badges 
+                  WHERE earned_at >= CURDATE() - INTERVAL 30 DAY
+                  GROUP BY badge_name
+                  ORDER BY earned_at DESC';
+        $stmt = $this->db->prepare($query);
+        $stmt->execute();
+        $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $this->generatePDF($result, 'Badges Reports');
+    }
+    public function getTeamsReport()
+    {
+        $query = 'SELECT 
+                    t.name AS team_name,
+                    COUNT(DISTINCT tm.user_id) AS total_members,
+                    (SELECT COUNT(DISTINCT tc.course_id) FROM team_courses tc WHERE tc.team_id = t.id) AS total_courses,
+                    (SELECT COUNT(DISTINCT a.id) FROM achievements a WHERE a.user_id IN (SELECT user_id FROM team_members WHERE team_id = t.id)) AS total_achievements,
+                    (SELECT COUNT(DISTINCT b.id) FROM badges b WHERE b.user_id IN (SELECT user_id FROM team_members WHERE team_id = t.id)) AS total_badges
+                  FROM teams t
+                  LEFT JOIN team_members tm ON tm.team_id = t.id
+                  GROUP BY t.id
+                  ORDER BY t.name';
+
+        $stmt = $this->db->prepare($query);
+        $stmt->execute();
+        $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $this->generatePDF($result, 'Teams Report');
+    }
+
+
+
+    public function getLearningPathReport()
+    {
+        $report = [];
+
+        //  Total Learning Paths created in the last 30 days
+        $query = 'SELECT COUNT(*) as total_learning_paths 
+                  FROM learning_paths 
+                  WHERE created_at >= NOW() - INTERVAL 30 DAY';
+        $stmt = $this->db->prepare($query);
+        $stmt->execute();
+        $report['Total Learning Paths'] = (int) $stmt->fetch(PDO::FETCH_ASSOC)['total_learning_paths'];
+
+        //  Total Users enrolled in Learning Paths in the last 30 days
+        $query = 'SELECT COUNT(DISTINCT user_id) as total_enrolled_users 
+                  FROM user_learning_path_progress 
+                  WHERE completed_at >= NOW() - INTERVAL 30 DAY';
+        $stmt = $this->db->prepare($query);
+        $stmt->execute();
+        $report['Total Enrolled Users'] = (int) $stmt->fetch(PDO::FETCH_ASSOC)['total_enrolled_users'];
+
+        //  Total Completed Learning Paths in the last 30 days
+        $query = 'SELECT COUNT(*) as completed_learning_paths 
+                  FROM user_learning_path_progress 
+                  WHERE status = "Completed" 
+                  AND completed_at >= NOW() - INTERVAL 30 DAY';
+        $stmt = $this->db->prepare($query);
+        $stmt->execute();
+        $report['Completed Learning Paths'] = (int) $stmt->fetch(PDO::FETCH_ASSOC)['completed_learning_paths'];
+
+        //  Learning Path Details: Users Enrolled, Course Count, Users Completed, and User Course Completion
+        $query = 'SELECT lp.id, lp.name, 
+                         (SELECT COUNT(DISTINCT ulp.user_id) FROM user_learning_path_progress ulp WHERE ulp.learning_path_id = lp.id) as total_users_enrolled,
+                         (SELECT COUNT(*) FROM learning_path_courses lpc WHERE lpc.learning_path_id = lp.id) as total_courses,
+                         (SELECT COUNT(DISTINCT ulp.user_id) FROM user_learning_path_progress ulp WHERE ulp.learning_path_id = lp.id AND ulp.status = "Completed") as total_users_completed
+                  FROM learning_paths lp 
+                  WHERE lp.created_at >= NOW() - INTERVAL 30 DAY';
+        $stmt = $this->db->prepare($query);
+        $stmt->execute();
+        $report['Learning Paths'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $this->generateLpPDF([$report], 'Learning Path Report');
+    }
+    private function generateLPPDF($data, $title)
+    {
+        $pdf = new TCPDF();
+        $pdf->SetCreator(PDF_CREATOR);
+        $pdf->SetAuthor('LMS System');
+        $pdf->SetTitle($title);
+        $pdf->SetSubject($title);
+        $pdf->SetMargins(10, 10, 10);
+        $pdf->SetAutoPageBreak(TRUE, 10);
+        $pdf->AddPage();
+
+        // Title
+        $pdf->SetFont('helvetica', 'B', 16);
+        $pdf->Cell(0, 10, $title, 0, 1, 'C');
+        $pdf->Ln(5);
+
+        // Convert data to table format
+        $pdf->SetFont('helvetica', 'B', 12);
+        if (!empty($data)) {
+            // Get keys for table headers
+            $headers = array_keys($data[0]);
+
+            // Print table headers
+            foreach ($headers as $header) {
+                $pdf->Cell(45, 10, ucfirst(str_replace('_', ' ', $header)), 1);
+            }
+            $pdf->Ln();
+
+            // Print table rows
+            $pdf->SetFont('helvetica', '', 10);
+            foreach ($data as $row) {
+                foreach ($headers as $header) {
+                    // Convert arrays to JSON string or a formatted string
+                    $value = $row[$header] ?? '-';
+                    if (is_array($value)) {
+                        $value = json_encode($value, JSON_UNESCAPED_UNICODE); // Convert array to JSON string
+                    }
+                    $pdf->Cell(45, 10, substr($value, 0, 30), 1); // Trim long text for better display
+                }
+                $pdf->Ln();
+            }
         } else {
-            return [
-                'error' => false,
-                'status' => 200,
-                'massege' => 'no assessment found',
-                'data' => []
-            ];
+            $pdf->Cell(0, 10, 'No data available.', 0, 1, 'C');
         }
+
+        // Output PDF
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: attachment; filename="' . strtolower(str_replace(' ', '_', $title)) . '.pdf"');
+        $pdf->Output($title . '.pdf', 'D'); // 'D' for download
+        exit;
+    }
+
+    public function getSessionsReport()
+    {
+        $query = 'SELECT 
+                    COUNT(ilt.id) AS total_sessions_created, 
+                    ilt.id AS session_id,
+                    ilt.session_name,
+                    ilt.course_id,
+                    COUNT(DISTINCT ie.user_id) AS total_enrolled_students
+                  FROM ilt_sessions ilt
+                  LEFT JOIN ilt_enrollments ie ON ilt.id = ie.session_id
+                  GROUP BY ilt.id';
+        $stmt = $this->db->prepare($query);
+        $stmt->execute();
+        $sessionsData = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $this->generatePDF($sessionsData, 'Session Reports');
     }
 }

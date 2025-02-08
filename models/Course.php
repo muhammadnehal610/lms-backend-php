@@ -16,6 +16,80 @@ class Course
         $stmt->execute();
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
+    public function getCourseByIdByUser($course_id, $user_id)
+    {
+        try {
+            // Query to get course details
+            $query = 'SELECT * FROM course WHERE id = :id';
+            $stmt = $this->db->prepare($query);
+            $stmt->bindParam(':id', $course_id, PDO::PARAM_INT);
+            $stmt->execute();
+            $course = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if ($course) {
+                // Fetch modules
+                $modulesQuery = 'SELECT * FROM modules WHERE course_id = :course_id';
+                $modulesStmt = $this->db->prepare($modulesQuery);
+                $modulesStmt->bindParam(':course_id', $course_id, PDO::PARAM_INT);
+                $modulesStmt->execute();
+                $modules = $modulesStmt->fetchAll(PDO::FETCH_ASSOC);
+
+                // Get the total count of modules
+                $countQuery = 'SELECT COUNT(*) AS total_count FROM modules WHERE course_id = :course_id';
+                $countStmt = $this->db->prepare($countQuery);
+                $countStmt->bindParam(':course_id', $course_id, PDO::PARAM_INT);
+                $countStmt->execute();
+                $totalCount = $countStmt->fetch(PDO::FETCH_ASSOC)['total_count'];
+
+                // Add modules to course data
+                $course['modules'] = [
+                    'total_modules' => $totalCount,
+                    'modules' => $modules
+                ];
+
+                // Check user's enrollment status
+                $enrollmentQuery = 'SELECT additional_info FROM enrollment WHERE course_id = :course_id AND user_id = :user_id';
+                $enrollmentStmt = $this->db->prepare($enrollmentQuery);
+                $enrollmentStmt->bindParam(":course_id", $course_id, PDO::PARAM_INT);
+                $enrollmentStmt->bindParam(":user_id", $user_id, PDO::PARAM_INT);
+                $enrollmentStmt->execute();
+                $enrollmentData = $enrollmentStmt->fetch(PDO::FETCH_ASSOC);
+
+                $query = 'INSERT INTO course_views (user_id , course_id) VALUE (:user_id , :course_id)';
+                $stmt = $this->db->prepare($query);
+                $stmt->bindParam(":user_id", $user_id);
+                $stmt->bindParam(":course_id", $course_id);
+                $stmt->execute();
+
+                // Determine course status
+                if ($enrollmentData) {
+                    switch ($enrollmentData['additional_info']) {
+                        case 'Completed':
+                            $course['course_status'] = "Course Completed";
+                            break;
+                        case 'In Progress':
+                            $course['course_status'] = "Resume Course";
+                            break;
+                        case 'Overdue':
+                            $course['course_status'] = "Resume Course"; // Treat overdue as in-progress
+                            break;
+                        default:
+                            $course['course_status'] = "Resume Course"; // Catch-all for other statuses
+                            break;
+                    }
+                } else {
+                    $course['course_status'] = "Get Started"; // User not enrolled
+                }
+
+                return $course;
+            }
+
+            return "null"; // Course not found
+        } catch (PDOException $e) {
+            error_log("Database query failed: " . $e->getMessage());
+            return $e->getMessage();
+        }
+    }
 
     public function getCourseById($id)
     {
@@ -47,8 +121,6 @@ class Course
 
         return null; // Return null if course not found
     }
-
-
     public function createCourse($data, $creatorId)
     {
         // Convert the learning_objective array to JSON
@@ -99,8 +171,6 @@ class Course
             return false;
         }
     }
-
-
     public function updateCourse($id, $data, $teacherId)
     {
         $query = 'UPDATE course SET 
@@ -133,51 +203,189 @@ class Course
         $result = $stmt->execute();
         return $result;
     }
-
-    public function markAsCompleted($course_id){
+    public function markAsCompleted($course_id)
+    {
         $query = 'UPDATE course SET completed_at=NOW() WHERE id=:course_id';
         $stmt = $this->db->prepare($query);
-        $stmt->bindParam(":course_id" , $course_id);
-     return $stmt->execute();
-
+        $stmt->bindParam(":course_id", $course_id);
+        return $stmt->execute();
     }
     public function checkAndMarkCourseComplete($course_id, $user_id)
-{
-    $modulesModel = new Modules($this->db);
+    {
+        $modulesModel = new Modules($this->db);
 
-    // Check if all modules are complete for the given course and user
-    if ($modulesModel->areAllModulesComplete($course_id, $user_id)) {
-        // Update the enrollment table to mark the course as completed
-        $query = '
+        // Check if all modules are complete for the given course and user
+        if ($modulesModel->areAllModulesComplete($course_id, $user_id)) {
+            // Update the enrollment table to mark the course as completed
+            $query = '
             UPDATE 
                 enrollment
             SET 
                 additional_info = "Completed",
                 completed_date = NOW()
-
             WHERE 
                 course_id = :course_id 
                 AND user_id = :user_id';
-        
-        $stmt = $this->db->prepare($query);
-        $stmt->bindParam(':course_id', $course_id, PDO::PARAM_INT);
-        $stmt->bindParam(':user_id', $user_id, PDO::PARAM_INT);
-        $stmt->execute();
 
-        return $stmt->rowCount() > 0; // Return true if a row was updated
+            $stmt = $this->db->prepare($query);
+            $stmt->bindParam(':course_id', $course_id, PDO::PARAM_INT);
+            $stmt->bindParam(':user_id', $user_id, PDO::PARAM_INT);
+            $stmt->execute();
+
+            $result = $stmt->rowCount() > 0;
+            if ($result) {
+                $this->addBadge($user_id, $course_id);
+                $this->checkAndMarkLearningPathComplete($user_id, $course_id);
+            }
+        }
+        return false; // Return false if not all modules are complete
     }
+    public function checkAndMarkLearningPathComplete($user_id, $completed_course_id)
+    {
+        //  Find Learning Paths the completed course belongs to
+        $query = 'SELECT learning_path_id FROM learning_path_courses WHERE course_id = :course_id';
+        $stmt = $this->db->prepare($query);
+        $stmt->bindParam(":course_id", $completed_course_id, PDO::PARAM_INT);
+        $stmt->execute();
+        $learningPaths = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    return false; // Return false if not all modules are complete
-}
+        foreach ($learningPaths as $path) {
+            $learning_path_id = $path['learning_path_id'];
 
+            //  Get total courses in the Learning Path
+            $totalCoursesQuery = 'SELECT COUNT(*) as total_courses FROM learning_path_courses WHERE learning_path_id = :learning_path_id';
+            $totalCoursesStmt = $this->db->prepare($totalCoursesQuery);
+            $totalCoursesStmt->bindParam(":learning_path_id", $learning_path_id, PDO::PARAM_INT);
+            $totalCoursesStmt->execute();
+            $totalCourses = (int) $totalCoursesStmt->fetch(PDO::FETCH_ASSOC)['total_courses'];
 
+            //  Get completed courses for this user
+            $completedCoursesQuery = 'SELECT COUNT(*) as completed_courses FROM enrollment 
+                                      WHERE user_id = :user_id 
+                                      AND course_id IN 
+                                        (SELECT course_id FROM learning_path_courses WHERE learning_path_id = :learning_path_id)
+                                      AND additional_info = "Completed"';
+            $completedCoursesStmt = $this->db->prepare($completedCoursesQuery);
+            $completedCoursesStmt->bindParam(":user_id", $user_id, PDO::PARAM_INT);
+            $completedCoursesStmt->bindParam(":learning_path_id", $learning_path_id, PDO::PARAM_INT);
+            $completedCoursesStmt->execute();
+            $completedCourses = (int) $completedCoursesStmt->fetch(PDO::FETCH_ASSOC)['completed_courses'];
+
+            //  Calculate progress (avoid division by zero)
+            $progress = ($totalCourses > 0) ? round(($completedCourses / $totalCourses) * 100, 2) : 0;
+
+            //  Determine status
+            $status = ($completedCourses == $totalCourses) ? "Completed" : "In Progress";
+
+            //  Check if the progress already exists
+            $checkProgressQuery = 'SELECT id FROM user_learning_path_progress WHERE user_id = :user_id AND learning_path_id = :learning_path_id';
+            $checkProgressStmt = $this->db->prepare($checkProgressQuery);
+            $checkProgressStmt->bindParam(":user_id", $user_id, PDO::PARAM_INT);
+            $checkProgressStmt->bindParam(":learning_path_id", $learning_path_id, PDO::PARAM_INT);
+            $checkProgressStmt->execute();
+            $existingProgress = $checkProgressStmt->fetch(PDO::FETCH_ASSOC);
+
+            if ($existingProgress) {
+                //  Update existing progress record
+                $updateProgressQuery = 'UPDATE user_learning_path_progress 
+                                        SET progress = :progress, status = :status , completed_at = NOW()
+                                        WHERE user_id = :user_id AND learning_path_id = :learning_path_id';
+            } else {
+                //  Insert new progress record if not exists
+                $updateProgressQuery = 'INSERT INTO user_learning_path_progress (user_id, learning_path_id, progress, status) 
+                                        VALUES (:user_id, :learning_path_id, :progress, :status)';
+            }
+
+            $updateProgressStmt = $this->db->prepare($updateProgressQuery);
+            $updateProgressStmt->bindParam(":progress", $progress, PDO::PARAM_STR); // Using STR to handle decimal values
+            $updateProgressStmt->bindParam(":status", $status, PDO::PARAM_STR);
+            $updateProgressStmt->bindParam(":user_id", $user_id, PDO::PARAM_INT);
+            $updateProgressStmt->bindParam(":learning_path_id", $learning_path_id, PDO::PARAM_INT);
+            $updateProgressStmt->execute();
+        }
+    }
+    public function addBadge($user_id, $course_id)
+    {
+        // Check if all modules in course are completed
+        $query = "SELECT COUNT(*) as total_modules FROM modules WHERE course_id = :course_id";
+        $stmt = $this->db->prepare($query);
+        $stmt->bindParam(':course_id', $course_id);
+        $stmt->execute();
+        $total_modules = $stmt->fetch(PDO::FETCH_ASSOC)['total_modules'];
+
+        $query = "SELECT COUNT(*) as completed_modules FROM achievements 
+                  JOIN modules ON achievements.module_id = modules.id 
+                  WHERE achievements.user_id = :user_id AND modules.course_id = :course_id";
+        $stmt = $this->db->prepare($query);
+        $stmt->bindParam(':user_id', $user_id);
+        $stmt->bindParam(':course_id', $course_id);
+        $stmt->execute();
+        $completed_modules = $stmt->fetch(PDO::FETCH_ASSOC)['completed_modules'];
+
+        if ($completed_modules == $total_modules) {
+            // Grant badge if all modules are completed
+            $course = $this->getCourseById($course_id);
+            $query = "INSERT INTO badges (user_id, course_id, badge_name) VALUES (:user_id, :course_id, :badges_title)";
+            $stmt = $this->db->prepare($query);
+            $stmt->bindParam(':user_id', $user_id);
+            $stmt->bindParam(':course_id', $course_id);
+            $stmt->bindParam(':badges_title', $course['title']);
+
+            if ($stmt->execute()) {
+                return json_encode(["status" => "success", "message" => "Badge awarded!"]);
+            } else {
+                return json_encode(["status" => "error", "message" => "Failed to grant badge."]);
+            }
+        } else {
+            return json_encode(["status" => "error", "message" => "Course not yet completed."]);
+        }
+    }
+    public function getBadgesByUserId($user_id)
+    {
+        $query = 'SELECT badge_name FROM badges WHERE user_id=:user_id';
+        $stmt = $this->db->prepare($query);
+        $stmt->bindParam(":user_id", $user_id);
+        $stmt->execute();
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+    public function addEnrollmentByuser($course_id, $user_id)
+    {
+        $query = 'SELECT id FROM enrollment WHERE user_id=:user_id';
+        $stmt = $this->db->prepare($query);
+        $stmt->bindParam(":user_id", $user_id);
+        $stmt->execute();
+        if ($stmt->fetch(PDO::FETCH_ASSOC)) {
+            return [
+                'error' => true,
+                'status' => 400,
+                'massege' => 'user already enrolled'
+            ];
+        }
+        $getUser = 'SELECT id , first_name , email FROM person WHERE id=:user_id';
+        $userStmt = $this->db->prepare($getUser);
+        $userStmt->bindParam(":user_id", $user_id);
+        $userStmt->execute();
+        $userInfo = $userStmt->fetch(PDO::FETCH_ASSOC);
+        $query = 'INSERT INTO enrollment (name, email, course_id, user_id) VALUES (:name, :email, :course_id, :user_id)';
+        $stmt = $this->db->prepare($query);
+        $stmt->bindParam(':name', $userInfo['first_name']);
+        $stmt->bindParam(':email', $userInfo['email']);
+        $stmt->bindParam(':course_id', $course_id);
+        $stmt->bindParam(':user_id', $userInfo['id']);
+        $result = $stmt->execute();
+
+        if ($result) {
+            return [
+                'error' => false,
+                'status' => 200,
+                'massege' => 'you are successfully enrolled in this course'
+            ];
+        }
+    }
     public function addEnrollments($course_id, $usersInfo)
     {
         $errors = [];
         $successCount = 0;
-
-
-
         foreach ($usersInfo as $userInfo) {
             $query = 'SELECT id FROM enrollment WHERE course_id = :course_id AND user_id = :userId';
             $stmt = $this->db->prepare($query);
@@ -253,8 +461,21 @@ class Course
             ];
         }
     }
+    public function deleteEnrollmentByUser($course_id, $user_id)
+    {
+        $query = 'DELETE FROM enrollment WHERE course_id = :course_id AND user_id = :user_id';
+        $stmt = $this->db->prepare($query);
+        $stmt->bindParam(':course_id', $course_id);
+        $stmt->bindParam(':user_id', $user_id);
+        if ($stmt->execute()) {
+            $query = 'UPDATE course SET total_enrolled_students = total_enrolled_students - 1 WHERE id = :course_id';
+            $stmt = $this->db->prepare($query);
 
-
+            $stmt->bindParam(':course_id', $course_id, PDO::PARAM_INT);
+            $stmt->execute();
+        }
+        return true;
+    }
     public function deleteEnrollments($course_id, $user_ids)
     {
         $errors = [];

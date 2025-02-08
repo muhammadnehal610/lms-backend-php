@@ -37,6 +37,10 @@ class CourseController
             return ['error' => true, 'status' => 404, 'message' => 'Course not found'];
         }
     }
+    public function getCourseByIdByUser($course_id, $user_id)
+    {
+        return $this->courseModel->getCourseByIdByUser($course_id, $user_id);
+    }
 
     public function createCourse($data, $createrId)
     {
@@ -105,7 +109,7 @@ class CourseController
                 'status' => 200,
                 'massege' => 'course mark as completed'
             ];
-        }else{
+        } else {
             return [
                 'error' => true,
                 'status' => 400,
@@ -113,12 +117,61 @@ class CourseController
             ];
         }
     }
-    public function addEnrollment($course, $user)
+    public function getBadgesByUserId($user_id)
     {
-        $userInfo = $this->userModel->getUserById($user);
-        $enrollment = $this->courseModel->addEnrollments($course, $userInfo);
+        $result = $this->courseModel->getBadgesByUserId($user_id);
+        return [
+            'error' => false,
+            'statuse' => 200,
+            'massege' => 'badges fectch successfully',
+            'data' => $result
+        ];
+    }
+    public function addEnrollmentByuser($course_id, $user_id)
+    {
+        $enrollment = $this->courseModel->addEnrollmentByuser($course_id, $user_id);
         return $enrollment;
     }
+    public function addEnrollment($courseId, $userIds)
+    {
+        // Validate that userIds is an array and not empty
+        if (!is_array($userIds) || empty($userIds)) {
+            return [
+                'error' => true,
+                'message' => 'Invalid user ID list. Must be a non-empty array.'
+            ];
+        }
+    
+        // Fetch user details (removing duplicates to avoid redundant DB queries)
+        $userIds = array_unique($userIds);
+        $userResponse = $this->userModel->getUserByIdMultipleUser($userIds);
+    
+        // If fetching users failed, return error
+        if ($userResponse['error']) {
+            return [
+                'error' => true,
+                'message' => 'Failed to fetch user details.',
+                'details' => $userResponse['message']
+            ];
+        }
+    
+        // Extract valid users from response
+        $usersInfo = $userResponse['users'];
+    
+        // If no valid users found, return an error
+        if (empty($usersInfo)) {
+            return [
+                'error' => true,
+                'message' => 'No valid users found for enrollment.'
+            ];
+        }
+    
+        // Process enrollments
+        $enrollmentResponse = $this->courseModel->addEnrollments($courseId, $usersInfo);
+    
+        return $enrollmentResponse;
+    }
+    
 
     public function getEnrollmentByCourseId($course_id)
     {
@@ -136,7 +189,10 @@ class CourseController
             ];
         }
     }
-
+    public function deleteEnrollmentByUser($course_id, $user_id)
+    {
+        return $this->courseModel->deleteEnrollmentByUser($course_id, $user_id);
+    }
     public function deleteEnrollmentByCourseId($course_id, $userId)
     {
         $result = $this->courseModel->deleteEnrollments($course_id, $userId);

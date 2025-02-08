@@ -20,10 +20,7 @@ class ModuleController
         }
         $result = $this->modules->addModule($data, $course_id);
         if ($result) {
-            return [
-                'status' => 200,
-                'msg' => 'module add successfully'
-            ];
+            return $result;
         } else {
             return [
                 'status' => 400,
@@ -31,23 +28,11 @@ class ModuleController
             ];
         }
     }
-    public function getModuleById($module_id, $user_id)
+   
+    public function getModuleById($module_id)
     {
-        $result = $this->modules->getModuleByIdForUser($module_id, $user_id);
-        return [
-            'status' => 200,
-            'msg' => 'Modules fetch successfully',
-            'data' => $result
-        ];
-    }
-    public function getModuleByIdAdmin($module_id)
-    {
-        $result = $this->modules->getModuleByIdAdmin($module_id);
-        return [
-            'status' => 200,
-            'msg' => 'Modules fetch successfully',
-            'data' => $result
-        ];
+        $result = $this->modules->getModuleById($module_id);
+        return $result;
     }
     public function changeModuleMandatory($module_id, $mandatory)
     {
@@ -153,13 +138,24 @@ class ModuleController
             ];
         }
     }
-    public function assessmentAswers($user_id, $module_id, $answers,$courseId)
+    public function assessmentAswers($user_id, $module_id, $answers, $courseId)
     {
-        $result = $this->modules->assessmentAnswer($user_id, $module_id, $answers ,$courseId);
+        $result = $this->modules->assessmentAnswer($user_id, $module_id, $answers, $courseId);
+        $this->courseModel->checkAndMarkCourseComplete($courseId, $user_id);
         return $result;
     }
-    public function getScormFile($module_id){
-        return $this->modules->getScormFile($module_id);
+    public function getScormFile($module_id, $courseId, $userId)
+    {
+        return $this->modules->getScormFile($module_id,  $courseId, $userId);
     }
-    
+    public function getAchievement($user_id)
+    {
+        $result = $this->modules->getAchievement($user_id);
+        return [
+            'error' => false,
+            'status' => 200,
+            'message' => 'Achievement fetched successfully',
+            'data' => $result
+        ];
+    }
 }

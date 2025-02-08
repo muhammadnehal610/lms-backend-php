@@ -78,11 +78,17 @@ class User
 
         return true; // Indicates a failure in insertion
     }
-
     // Model: register function
     public function register($data, $firstName, $lastName, $hashedPassword)
     {
-
+        $emailAlreadyExist =  $this->emailExists($data->email);
+        if ($emailAlreadyExist) {
+            return [
+                'error' => true,
+                'status' => 400,
+                'massege' => 'email already exist'
+            ]; // Return true if email exists
+        }
         // Prepare the SQL query to insert into the 'person' table
         $query = "INSERT INTO person (first_name, last_name, email, password) 
               VALUES (:first_name, :last_name, :email, :password)";
@@ -101,23 +107,20 @@ class User
             return ['status' => 500, 'message' => 'Unable to register user.'];
         }
     }
-
-
-
     // Login a user
-    public function login()
+    public function login($data)
     {
         $query = "SELECT id, first_name, last_name, email, password, profile_type, access_level
                   FROM person 
                   WHERE email = :email";
 
         $stmt = $this->conn->prepare($query);
-        $stmt->bindParam(":email", $this->email);
+        $stmt->bindParam(":email", $data->email);
         $stmt->execute();
 
         if ($stmt->rowCount() > 0) {
             $row = $stmt->fetch(PDO::FETCH_ASSOC);
-            if (password_verify($this->password, $row['password'])) {
+            if (password_verify($data->password, $row['password'])) {
 
                 // Corrected query to update the last_login field
                 $query = "UPDATE person SET last_login = NOW() WHERE id = :userId";
@@ -131,10 +134,6 @@ class User
 
         return null;
     }
-
-
-
-
     // Check if email exists in the database
     public function emailExists($email)
     {
@@ -143,10 +142,8 @@ class User
         $stmt->bindParam(":email", $email);
 
         $stmt->execute();
-
-        return $stmt->rowCount() < 0;  // Return true if email exists
+        return $stmt->fetch(PDO::FETCH_ASSOC);
     }
-
     public function usernameExists()
     {
         $query = "SELECT id FROM users WHERE user_name=:username";
@@ -155,9 +152,6 @@ class User
         $stmt->execute();
         return $stmt->rowCount() > 0;
     }
-
-
-
     // Forget password: update user's password
     public function forgetPassword($newPassword)
     {
@@ -174,10 +168,31 @@ class User
 
         return $stmt->execute();  // Return true if password updated successfully
     }
+    public function getEnumValuesUserTable()
+    {
+        $query = 'SHOW COLUMNS FROM person LIKE "access_level"';
+        $stmt = $this->conn->prepare($query);
+        $stmt->execute();
+        $access_roles = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+        $query = 'SHOW COLUMNS FROM person LIKE "profile_type"';
+        $stmt = $this->conn->prepare($query);
+        $stmt->execute();
+        $profile_type = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+        // ENUM values ko extract karne ka function
+        function extractEnumValues($typeString) {
+            preg_match_all("/'([^']+)'/", $typeString, $matches);
+            return $matches[1]; // ENUM values ko array me return karega
+        }
+    
+        return [
+            'access_level' => extractEnumValues($access_roles['Type']),
+            'profile_type' => extractEnumValues($profile_type['Type'])
+        ];
+    }
+    
     // Inside User.php Model
-
-
-
     public function getAllUsers($keyword, $status, $order)
     {
         $query = "SELECT *, TIMESTAMPDIFF(DAY, last_login, NOW()) AS days_since_last_login FROM person WHERE 1";
@@ -221,71 +236,62 @@ class User
             'totalRecords' => $totalRecords,
         ];
     }
-    public function getUserById($ids)
+    public function getUserById($id)
     {
-        // Ensure $ids is a valid non-empty array
-        if (!is_array($ids) || empty($ids)) {
-            return [
-                "error" => true,
-                "message" => "Invalid or empty IDs array.",
-            ];
-        }
-    
-        // Filter valid numeric IDs
-        $validIds = array_filter($ids, 'is_numeric');
-    
-        if (empty($validIds)) {
-            return [
-                "error" => true,
-                "message" => "No valid IDs provided.",
-            ];
-        }
-    
-        // Prepare the query using placeholders
-        $placeholders = implode(',', array_fill(0, count($validIds), '?'));
-        $query = "SELECT * FROM person WHERE id IN ($placeholders)";
+        $query = "SELECT * FROM person WHERE id=:user_id";
         $stmt = $this->conn->prepare($query);
-    
-        // Bind the IDs to the placeholders
-        foreach ($validIds as $index => $id) {
-            $stmt->bindValue($index + 1, $id, PDO::PARAM_INT);
-        }
-    
-        // Execute the query
+        $stmt->bindParam(":user_id", $id);
         $stmt->execute();
         $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-        // Process and return results
-        $result = [];
-        foreach ($ids as $id) {
-            if (is_numeric($id)) {
-                $user = array_filter($users, fn($u) => $u['id'] == $id);
-                $result[] = $user ? current($user) : ['id' => (int)$id, 'error' => 'User not found.'];
-            } else {
-                $result[] = ['id' => $id, 'error' => 'Invalid ID format.'];
-            }
-        }
-    
-        return $result;
+        return $users;
     }
-    
+    public function getUserByIdMultipleUser($ids)
+    {
+        // Ensure IDs are an array and not empty
+        if (empty($ids) || !is_array($ids)) {
+            return [
+                'error' => true,
+                'message' => 'Invalid user ID list.'
+            ];
+        }
 
+        // Remove duplicates from the array
+        $ids = array_unique($ids);
+
+        // Prepare placeholders for binding
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+
+        // Build the query with DISTINCT to remove duplicate rows
+        $query = "SELECT DISTINCT * FROM person WHERE id IN ($placeholders)";
+        $stmt = $this->conn->prepare($query);
+
+        // Execute with the array values
+        $stmt->execute($ids);
+
+        // Fetch all matching users
+        $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        return [
+            'error' => false,
+            'users' => $users
+        ];
+    }
 
     public function getInstructor()
     {
         $query = "SELECT * FROM person WHERE access_level = 'instructor' ";
         $stmt = $this->conn->prepare($query);
         $stmt->execute();
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        $user = $stmt->fetchAll(PDO::FETCH_ASSOC);
         return $user;
     }
     public function getInstructorById($instructorId)
     {
         $instructor_Id = (int)$instructorId;
-      
+
         $query = "SELECT * FROM person WHERE access_level = 'instructor' AND id=:instructor_id ";
         $stmt = $this->conn->prepare($query);
-        $stmt->bindParam(":instructor_id",$instructor_Id , PDO::PARAM_INT);
+        $stmt->bindParam(":instructor_id", $instructor_Id, PDO::PARAM_INT);
         $stmt->execute();
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
         return $user;
@@ -331,13 +337,13 @@ class User
                       inactive_date = :inactive_date, 
                       last_login = NULL 
                   WHERE id = :id";
-        
+
         $stmt = $this->conn->prepare($query);
-    
+
         // Bind the parameters to the query
         $stmt->bindParam(':inactive_date', $logoutTime);
         $stmt->bindParam(':id', $this->id);
-    
+
         // Execute the query and return the result
         if ($stmt->execute()) {
             return true;
@@ -345,8 +351,4 @@ class User
             return false;
         }
     }
-    
-
-
 }
-?>

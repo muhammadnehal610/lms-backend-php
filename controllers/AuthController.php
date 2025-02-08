@@ -74,7 +74,6 @@ class AuthController
         if (empty($data->name) || empty($data->email) || empty($data->password) || empty($data->confirmpassword)) {
             return ['status' => 400, 'message' => 'All fields are required.'];
         }
-
         // Password strength validation (you can adjust this according to your requirements)
         if (
             !preg_match('/^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/', $data->password)
@@ -130,17 +129,7 @@ class AuthController
         if (empty($data->email) || empty($data->password)) {
             return ['status' => 400, 'message' => 'Email and password are required.'];
         }
-
-        // Set the email and check if it exists
-        $this->user->email = $data->email;
-        $checkEmail = $this->user->emailExists($data->email);
-        if ($checkEmail) {
-            return ['status' => 400, 'message' => 'Email is not registered.', "emial" => $checkEmail];
-        }
-
-        // Set the password and validate
-        $this->user->password = $data->password;
-        $result = $this->user->login();
+        $result = $this->user->login($data);
         if ($result) {
             $this->user->id = $result['id'];
             // JWT Payload without expiration time
@@ -203,6 +192,10 @@ class AuthController
             return ['status' => 500, 'message' => 'Unable to update password.'];
         }
     }
+
+    public function getEnumValuesUserTable(){
+        return $this->user->getEnumValuesUserTable();
+    }
     // Check if the user is an admin
     public function checkAdmin()
     {
@@ -215,8 +208,8 @@ class AuthController
             $key = new Key($this->secretkey, 'HS256');
             $decodedToken = JWT::decode($jwt, $key);
 
-            if (isset($decodedToken->access_level) && strtolower($decodedToken->access_level) === 'admin') {
-                return 'admin';
+            if (isset($decodedToken->access_level) && strtolower($decodedToken->access_level) === 'administrator') {
+                return 'administrator';
             } else {
                 throw new Exception("Permission Denied. Only admin can perform this action.", 403);
             }
@@ -261,7 +254,7 @@ class AuthController
     {
         try {
             $isAdmin = $this->checkAdmin();
-            if ($isAdmin !== 'admin') {
+            if ($isAdmin !== 'administrator') {
                 throw new Exception("Permission Denied. Only admin can delete users.", 403);
             }
 

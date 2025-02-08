@@ -18,7 +18,7 @@ class ReportController
     {
         return $this->reportModel->getMostActiveCourses($intervalValue, $intervalType);
     }
-    
+
     public function getActiveUser($intervalValue, $intervalType)
     {
         return $this->reportModel->getActiveUser($intervalValue, $intervalType);
@@ -28,14 +28,38 @@ class ReportController
         $getLoginActivityChart = $this->reportModel->getLoginActivityChart();
         return $getLoginActivityChart;
     }
-    public function getModuleCompletionReport(){
+    public function getModuleCompletionReport()
+    {
         return $this->reportModel->getModuleCompletionReport();
     }
-    public function getCourseCompletionReport(){
+    public function getCourseCompletionReport()
+    {
         return $this->reportModel->getCourseCreationAndCompletionReport();
     }
-    public function getAssessmentCompletion(){
+    public function getAssessmentCompletion()
+    {
         return $this->reportModel->getAssessmentCompletion();
     }
-
+    public function getComplianceSummary()
+    {
+        return $this->reportModel->getComplianceSummary();
+    }
+    public function getAchievementReports()
+    {
+        return $this->reportModel->getAchievementReports();
+    }
+    public function getBadgesReports()
+    {
+        return $this->reportModel->getBadgesReports();
+    }
+    public function getTeamsReport()
+    {
+        return $this->reportModel->getTeamsReport();
+    }
+    public function getLearningPathReport(){
+        return $this->reportModel->getLearningPathReport();
+    }
+    public function getSessionsReport(){
+        return $this->reportModel->getSessionsReport();
+    }
 }
